@@ -16,18 +16,55 @@ const app = express();
 const server = http.createServer(app);
 
 // ==================================================
+// CORS CONFIGURATION
+// ==================================================
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests without an origin, such as Postman/server-side requests
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(
+      new Error(`CORS blocked for origin: ${origin}`)
+    );
+  },
+  credentials: true,
+};
+
+// ==================================================
 // MIDDLEWARE
 // ==================================================
 
-app.use(
-  cors({
-    origin: "http://localhost:5173",
-    credentials: true,
-  })
-);
+app.use(cors(corsOptions));
 
 app.use(express.json());
 app.use(cookieParser());
+
+// ==================================================
+// COOKIE CONFIGURATION
+// ==================================================
+
+const isProduction =
+  process.env.NODE_ENV === "production";
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+};
 
 // ==================================================
 // MONGODB
@@ -49,7 +86,19 @@ mongoose
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error(`Socket.IO CORS blocked for origin: ${origin}`)
+      );
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -102,6 +151,7 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     const cleanUsername = username.trim();
+
     const normalizedEmail =
       email.trim().toLowerCase();
 
@@ -170,13 +220,11 @@ app.post("/api/auth/register", async (req, res) => {
 
     const token = createToken(user._id);
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge:
-        7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie(
+      "token",
+      token,
+      cookieOptions
+    );
 
     return res.status(201).json({
       success: true,
@@ -256,13 +304,11 @@ app.post("/api/auth/login", async (req, res) => {
 
     const token = createToken(user._id);
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: false,
-      sameSite: "lax",
-      maxAge:
-        7 * 24 * 60 * 60 * 1000,
-    });
+    res.cookie(
+      "token",
+      token,
+      cookieOptions
+    );
 
     return res.json({
       success: true,
@@ -363,8 +409,10 @@ app.post(
   (req, res) => {
     res.clearCookie("token", {
       httpOnly: true,
-      secure: false,
-      sameSite: "lax",
+      secure: isProduction,
+      sameSite: isProduction
+        ? "none"
+        : "lax",
     });
 
     res.json({
@@ -550,7 +598,15 @@ io.on("connection", (socket) => {
 
   socket.on(
     "make-move",
-    ({ roomId, from, to, promotion }, callback) => {
+    (
+      {
+        roomId,
+        from,
+        to,
+        promotion,
+      },
+      callback
+    ) => {
       const room =
         rooms.get(roomId);
 
@@ -575,10 +631,12 @@ io.on("connection", (socket) => {
       }
 
       // Find this player's color
-      const player = room.players.find(
-        (item) =>
-          item.socketId === socket.id
-      );
+      const player =
+        room.players.find(
+          (item) =>
+            item.socketId ===
+            socket.id
+        );
 
       if (!player) {
         callback?.({
@@ -605,11 +663,13 @@ io.on("connection", (socket) => {
       }
 
       try {
-        const move = room.game.move({
-          from,
-          to,
-          promotion: promotion || "q",
-        });
+        const move =
+          room.game.move({
+            from,
+            to,
+            promotion:
+              promotion || "q",
+          });
 
         if (!move) {
           callback?.({
@@ -643,10 +703,13 @@ io.on("connection", (socket) => {
         // Send move to opponent
         socket
           .to(roomId)
-          .emit("opponent-move", {
-            move,
-            fen: newFen,
-          });
+          .emit(
+            "opponent-move",
+            {
+              move,
+              fen: newFen,
+            }
+          );
 
         // Send game state to everyone
         io.to(roomId).emit(
@@ -871,8 +934,12 @@ io.on("connection", (socket) => {
 const PORT =
   process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log(
-    `ChessArena server running on port ${PORT}`
-  );
-});
+server.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    console.log(
+      `ChessArena server running on port ${PORT}`
+    );
+  }
+);
