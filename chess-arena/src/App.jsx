@@ -4,9 +4,9 @@ import { Chessboard } from "react-chessboard";
 import { io } from "socket.io-client";
 import "./App.css";
 
-const socket = io("http://localhost:5000");
+const API_URL = import.meta.env.VITE_API_URL;
+const socket = io(API_URL);
 
-const API_URL = "http://localhost:5000";
 
 function App() {
   // ==================================================
